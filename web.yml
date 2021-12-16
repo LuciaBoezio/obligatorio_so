@@ -1,0 +1,102 @@
+- name: Configurar servidor web
+  hosts: web
+  tasks:
+    - name: Configurar puerto SSH
+      lineinfile:
+        dest: "/etc/ssh/sshd_config"
+        regexp: "^Port"
+        line: "Port 22222"
+        state: present
+        backup: yes
+
+    - name: Habilitar puerto SSH selinux
+      seport:
+        ports: "22222"
+        proto: "tcp"
+        setype: "ssh_port_t"
+        state: "present"
+
+    - name: Habilitar 22222 en firewall
+      firewalld:
+        port: 22222/tcp
+        permanent: true
+        state: enabled
+
+    - name: Prohibir login con Root
+      lineinfile:
+        dest: /etc/ssh/sshd_config
+        regexp: '^PermitRootLogin'
+        line: "PermitRootLogin no"
+        state: present
+        backup: yes
+
+    - name: Crear usuario admin
+      user:
+        name: admin
+        groups:
+          - wheel
+        state: present
+        createhome: true
+
+    - name: Crear directorio .ssh para admin
+      file:
+        path: /home/admin/.ssh
+        state: directory
+        owner: admin
+
+    - name: Copiar claves al nuevo usuario
+      copy: 
+        src: /root/.ssh/authorized_keys 
+        dest: /home/admin/.ssh/authorized_keys
+        remote_src: yes
+        owner: admin
+
+    - name: Instalar requisitos para docker
+      yum:
+        name: 
+          - yum-utils
+          - device-mapper-persistent-data
+          - lvm2
+        state: present
+
+    - name: Configurar repo docker
+      get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+        mode: 0644
+
+    - name: Instalar docker
+      yum:
+        name: docker-ce
+        state: present 
+
+    - name: Habilitar servicio de Docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Instalar python docker
+      pip:
+        name: docker
+    
+    - name: Crear contenedor de Docker
+      docker_container:
+        name: php_web
+        image: php:7.4-apache
+        state: started
+        published_ports:
+          - 80:80
+        volumes:
+          - /var/www/html:/var/www/html
+
+    - name: Copiar html de prueba
+      copy:
+        src: ./index.html
+        dest: /var/www/html/index.html
+
+    - name: Reiniciar SSH
+      service:
+        name: sshd
+        state: restarted
+
