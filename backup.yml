@@ -1,0 +1,80 @@
+- name: Configurar servidor de backup
+  hosts: backup
+  tasks:
+    - name: Configurar puerto SSH
+      lineinfile:
+        dest: "/etc/ssh/sshd_config"
+        regexp: "^Port"
+        line: "Port 22222"
+        state: present
+        backup: yes
+
+    - name: Habilitar puerto SSH selinux
+      seport:
+        ports: "22222"
+        proto: "tcp"
+        setype: "ssh_port_t"
+        state: "present"
+
+    - name: Habilitar 22222 en firewall
+      firewalld:
+        port: 22222/tcp
+        permanent: true
+        state: enabled
+
+    - name: Prohibir login con Root
+      lineinfile:
+        dest: /etc/ssh/sshd_config
+        regexp: '^PermitRootLogin'
+        line: "PermitRootLogin no"
+        state: present
+        backup: yes
+
+    - name: Crear usuario admin
+      user:
+        name: admin
+        groups:
+          - wheel
+        state: present
+
+    - name: Generar clave de SSH
+      shell: > 
+        ssh-keygen -q -b 2048 -t rsa -N "" -C "creating SSH" -f ~/.ssh/id_rsa
+        creates="~/.ssh/id_rsa"
+
+    - name: Copiar clave
+      shell: cat ~/.ssh/id_rsa.pub
+      register: ssh_keys
+    
+    - name: Instalar clave backup en servidor web
+      authorized_key:
+        user: admin
+        state: present
+        key: "{{ item[0] }}"
+      delegate_to: "{{ item[1] }}"
+      with_nested: 
+        - "{{ ssh_keys.stdout }}"
+        - "{{groups['web']}}"
+      vars:
+        ansible_ssh_user: admin
+        ansible_ssh_port: 22222
+
+    - name: Copiar script de backup
+      copy:
+        src: ./backup.sh
+        dest: /
+
+    - name: Cron backup
+      cron:
+        name: backup
+        minute: "0"
+        hour: "*/2"
+        job: "WEB_SERVER_HOST={{ item }} bash /backup.sh"
+      with_inventory_hostnames: 
+        - web
+
+    - name: Reiniciar SSH
+      service:
+        name: sshd
+        state: restarted
+
